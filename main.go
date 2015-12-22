@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -16,6 +18,8 @@ type TestConf struct {
 	TargetPort int
 
 	Timeout time.Duration
+
+	Commands []string
 }
 
 type Assertion struct {
@@ -32,7 +36,7 @@ func (tc *TestConf) Run() error {
 		return err
 	}
 
-	fmt.Println(list.Addr().String())
+	port := list.Addr().(*net.TCPAddr).Port
 
 	var assertCount int
 	mux := http.NewServeMux()
@@ -77,12 +81,41 @@ func (tc *TestConf) Run() error {
 			fatal(err)
 		}
 
+		fmt.Printf("passed %d/%d\n", assertCount, len(tc.Tests))
 		if assertCount == len(tc.Tests) {
-			os.Exit(0)
+			list.Close()
 		}
 	})
 
-	return http.Serve(list, mux)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		http.Serve(list, mux)
+	}()
+
+	var timoutCh <-chan time.Time
+	if tc.Timeout != 0 {
+		timoutCh = time.After(tc.Timeout)
+	}
+
+	for _, c := range tc.Commands {
+		c = strings.Replace(c, "%port", fmt.Sprint(port), -1)
+		fmt.Println("cmd:", c)
+		args := strings.Fields(c)
+		cmd := exec.Command(args[0], args[1:]...)
+		err = cmd.Run()
+		if err != nil {
+			fatal(err)
+		}
+	}
+
+	select {
+	case <-done:
+		return nil
+	case <-timoutCh:
+		fatal("test timed out!")
+	}
+	panic("should not get here")
 }
 
 func stringArrMatch(a, b []string) bool {
