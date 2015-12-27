@@ -3,12 +3,15 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
+
+	"flag"
 )
 
 type TestConf struct {
@@ -137,19 +140,34 @@ func fatal(i interface{}) {
 }
 
 func main() {
-	if len(os.Args) < 2 {
+	tport := flag.Int("tport", -1, "specify the port of the target server (overrides config file)")
+	flag.Parse()
+
+	if len(flag.Args()) < 1 {
 		fatal("must specify a testing json file as input")
 	}
 
-	fi, err := os.Open(os.Args[1])
+	var read io.Reader
+	fname := flag.Arg(0)
+	if fname == "-" {
+		read = os.Stdin
+	} else {
+		fi, err := os.Open(flag.Arg(0))
+		if err != nil {
+			fatal(err)
+		}
+		defer fi.Close()
+		read = fi
+	}
+
+	var tc TestConf
+	err := json.NewDecoder(read).Decode(&tc)
 	if err != nil {
 		fatal(err)
 	}
 
-	var tc TestConf
-	err = json.NewDecoder(fi).Decode(&tc)
-	if err != nil {
-		fatal(err)
+	if *tport != -1 {
+		tc.TargetPort = *tport
 	}
 
 	err = tc.Run()
